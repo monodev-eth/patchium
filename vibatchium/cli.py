@@ -232,8 +232,18 @@ def _cli_resolve_headless(explicit, *, isatty: bool) -> bool:
                    "(opt-in, persisted per session — this writes the choice, like "
                    "`vb gpu set`). Default: persisted/off. Requires a DRM render "
                    "node; degrades to SwiftShader + WARN otherwise. Headless-only.")
+@click.option("--scale", "scale", type=float, default=None,
+              help="devicePixelRatio for this session (1-4, persisted like --gpu). "
+                   "2 = real retina captures — screenshots come back at 2 image "
+                   "pixels per CSS pixel, including interactive states a headless "
+                   "`--force-device-scale-factor` run can't reach. TRADE-OFF: "
+                   "Chromium only takes deviceScaleFactor as a context option and "
+                   "Playwright refuses it with no_viewport, so a scaled session "
+                   "PINS a viewport (1280x800; resize with `vb viewport`) and "
+                   "emulates device metrics — a capture posture, not one to point "
+                   "at Cloudflare. `--scale 1` clears it. Patchright backend only.")
 @click.pass_context
-def start(ctx, profile, headless, backend, ephemeral, gpu):
+def start(ctx, profile, headless, backend, ephemeral, gpu, scale):
     """Start a browser session (cold launch real Chrome + persistent context).
 
     Default headed/headless is inferred from the calling context: a TTY means a
@@ -257,6 +267,11 @@ def start(ctx, profile, headless, backend, ephemeral, gpu):
     # durable + self-heal-safe; a bare `vb start` sends nothing (inherits env/persisted).
     if gpu is not None:
         args["gpu"] = gpu
+    # 0.20.0: same persist-on-start contract as --gpu — the daemon writes
+    # display.json so the posture survives a self-heal relaunch. A bare `vb start`
+    # sends nothing and inherits whatever is persisted.
+    if scale is not None:
+        args["scale"] = scale
     _emit(call("start", args), ctx.obj["json"])
 
 

@@ -696,10 +696,18 @@ class SessionRegistry:
         # them (the relaunch/self-heal path), so a mid-life `vb proxy set` is
         # honored on recovery.
         proxy_cfg, geo_cfg, gpu_on, gpu_node = self._load_session_overrides(name, pdir)
+        # 0.20.0: the device-scale posture (display.json) resolves the same way —
+        # read here for the warm-claim guard, then handed to _launch_for so the
+        # cold path doesn't re-read it. Kept out of _load_session_overrides's tuple
+        # because it needs none of that helper's cross-config coherence logic (it's
+        # a plain disk read with no proxy→geo-style inference).
+        from ..display import resolve_display
+        display_cfg = resolve_display(pdir, name=name)
         # Wave 6.1b: prefer a pre-warmed session if one is available for this
         # name AND the requested config matches (backend, headless, no proxy,
-        # no geo, no gpu). Proxy-/geo-/gpu-configured sessions always launch fresh
-        # because the warm session was launched without those overrides.
+        # no geo, no gpu, no scale). Proxy-/geo-/gpu-/scale-configured sessions
+        # always launch fresh because the warm session was launched without those
+        # overrides.
         #
         # If a prewarm is in-flight (task started but not done), await it
         # first — both that task and a fresh launch would race for the
@@ -714,7 +722,8 @@ class SessionRegistry:
         if (warm is not None and backend == "patchright"
                 and warm.profile_dir == pdir and warm.headless == headless
                 and proxy_cfg is None and geo_cfg is None
-                and not gpu_on):  # prewarm never launches with GPU, so gpu_on=True → cold
+                and not gpu_on  # prewarm never launches with GPU, so gpu_on=True → cold
+                and display_cfg is None):  # ...nor with a device-scale pin
             sess = warm
             log.info("session %s claimed pre-warmed Chrome", name)
         else:
@@ -741,6 +750,11 @@ class SessionRegistry:
                     f"(VIBATCHIUM_SESSION_RAM_FLOOR_MB). Close a session or "
                     f"wait for memory to free up."
                 )
+            # display_cfg is deliberately NOT passed through: _launch_for resolves
+            # it from disk on every path, so there is no caller that can hand it a
+            # stale posture, and the cost is one stat+read of a ~20-byte file next
+            # to spawning a Chrome. (Keeping it out of the signature also means the
+            # relaunch/self-heal path and this one are literally the same code.)
             sess = await self._launch_for(name, profile_dir=pdir,
                                           headless=headless, backend=backend,
                                           proxy_cfg=proxy_cfg, geo_cfg=geo_cfg,
@@ -825,6 +839,12 @@ class SessionRegistry:
         through a renderer-crash relaunch (otherwise it would silently revert to
         SwiftShader). create() passes its already-loaded cfgs through to avoid a
         redundant read.
+
+        The 0.20.0 device-scale posture is ALWAYS read here rather than passed in:
+        it needs the same self-heal guarantee (a crashed 2x capture session that
+        came back at 1x would silently halve every subsequent screenshot) and has
+        no caller that could usefully override it, so making it unconditional is
+        strictly safer than one more optional cfg to forget.
         """
         pw = await self._ensure_pw()
         from . import backends as _backends
@@ -832,12 +852,15 @@ class SessionRegistry:
                 or gpu_node is _UNSET):
             (proxy_cfg, geo_cfg, gpu_on,
              gpu_node) = self._load_session_overrides(name, profile_dir)
+        from ..display import resolve_display
+        display_cfg = resolve_display(profile_dir, name=name)
 
         async def _do_launch():
             return await _backends.launch(
                 backend, profile_dir, headless=headless, pw=pw, proxy=proxy_cfg,
                 timezone_id=(geo_cfg or {}).get("timezone_id"), gpu=bool(gpu_on),
-                gpu_node=gpu_node)
+                gpu_node=gpu_node,
+                device_scale_factor=(display_cfg or {}).get("scale"))
 
         try:
             return await _do_launch()
@@ -970,6 +993,18 @@ class SessionRegistry:
             log.warning("session %s has GPU WebGL configured but is ATTACHing to an "
                         "existing Chrome — GPU applies only to cold-launch (`start`); "
                         "the attached browser keeps its own WebGL renderer.", name)
+        # 0.20.0: and the same for a device-scale pin — deviceScaleFactor is a
+        # context-CREATION option, and attach connects to a context we didn't
+        # create. The attached browser keeps its own devicePixelRatio (which, on a
+        # real headful Chrome, is the honest one anyway). Warn rather than let a
+        # configured session hand back captures at an unexpected scale.
+        from ..display import load_session_display
+        _disp = load_session_display(session_dir(name))
+        if _disp:
+            log.warning("session %s has scale %sx configured but is ATTACHing to an "
+                        "existing Chrome — scale applies only to cold-launch "
+                        "(`start`); the attached browser keeps its own "
+                        "devicePixelRatio.", name, _disp["scale"])
         entry = SessionEntry(name=name, profile_dir=session_dir(name), session=sess)
         self._entries[name] = entry
         log.info("session attached name=%s cdp_url=%s", name, cdp_url)

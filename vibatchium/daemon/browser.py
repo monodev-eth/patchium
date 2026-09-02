@@ -191,6 +191,11 @@ class BrowserSession:
     # 0.13.0 de-twinning: the render-node pin this GPU session launched with (e.g.
     # "nvidia"), or None for the host-default GPU. Observability only.
     gpu_node: str | None = None
+    # 0.20.0: the devicePixelRatio this session launched with (1.0 = the default
+    # no_viewport posture). Recorded for observability (`status`) and the
+    # warm-claim/self-heal posture check, mirroring `gpu`. Only ever > 1 on a
+    # patchright launch — nodriver connects over CDP to a context it didn't create.
+    device_scale_factor: float = 1.0
     frame_ref: object = None         # patchright.Frame | None
     dialog_policy: dict = field(default_factory=lambda: {"action": "dismiss"})
     downloads: list = field(default_factory=list)
@@ -402,7 +407,9 @@ async def launch_session(profile_dir: Path, headless: bool = False,
                          proxy: dict | None = None,
                          timezone_id: str | None = None,
                          gpu: bool = False,
-                         gpu_node: str | None = None) -> BrowserSession:
+                         gpu_node: str | None = None,
+                         device_scale_factor: float | None = None,
+                         viewport: dict | None = None) -> BrowserSession:
     """Cold-launch real Chrome with persistent context (canonical Patchright config).
 
     The Playwright driver (Node.js subprocess) can be shared across multiple
@@ -432,10 +439,28 @@ async def launch_session(profile_dir: Path, headless: bool = False,
     (e.g. "nvidia") by setting the glvnd EGL vendor env, so different same-box accounts
     report DIFFERENT real GPUs. None = host default (Intel here). Requires `gpu` +
     headless; a node with no matching EGL vendor is a no-op (default GPU).
+
+    `device_scale_factor` (0.20.0): pin `window.devicePixelRatio` so captures come
+    back at N image pixels per CSS pixel — a real 2x/retina shot of a page you drove
+    to an interactive state. Chromium only accepts deviceScaleFactor as a CONTEXT
+    option and Playwright rejects it alongside `no_viewport`, so a scaled launch
+    REPLACES the no_viewport default with an explicit `viewport` pin (defaulting to
+    display.DEFAULT_SCALED_VIEWPORT). That is the documented trade-off: a scaled
+    session emulates device metrics (screen == viewport), so it's a capture posture,
+    not a walled-browsing one. None/1.0 = unchanged default. See display.py for why
+    the runtime CDP override was rejected.
+
+    `viewport` (0.20.0): the {width, height} pin that a scaled launch requires.
+    Ignored unless `device_scale_factor` > 1 — on its own it would trade the
+    no_viewport stealth default for nothing. `vb viewport` resizes afterwards and
+    Playwright re-applies the scale, so this is only the starting size.
     """
     profile_dir.mkdir(parents=True, exist_ok=True)
-    log.info("launch persistent context profile=%s headless=%s proxy=%s gpu=%s node=%s",
-             profile_dir, headless, bool(proxy), bool(gpu and headless), gpu_node)
+    scale = float(device_scale_factor or 1.0)
+    log.info("launch persistent context profile=%s headless=%s proxy=%s gpu=%s "
+             "node=%s scale=%s",
+             profile_dir, headless, bool(proxy), bool(gpu and headless), gpu_node,
+             scale if scale > 1 else None)
 
     owns_pw = pw is None
     if pw is None:
@@ -523,6 +548,19 @@ async def launch_session(profile_dir: Path, headless: bool = False,
         "no_viewport": True,
         "args": extra_args if extra_args else None,
     }
+    # 0.20.0: a device-scale pin and `no_viewport` are mutually exclusive —
+    # Playwright hard-errors with `"deviceScaleFactor" option is not supported
+    # with null "viewport"`, and passing both viewport and no_viewport is also
+    # refused. So a scaled launch SWAPS the default posture for an explicit
+    # viewport rather than adding to it. Only when a scale is actually
+    # requested: an unscaled launch stays byte-identical to the stealth default.
+    if scale > 1:
+        from ..display import DEFAULT_SCALED_VIEWPORT
+        vp = viewport or DEFAULT_SCALED_VIEWPORT
+        launch_kwargs.pop("no_viewport")
+        launch_kwargs["viewport"] = {"width": int(vp["width"]),
+                                     "height": int(vp["height"])}
+        launch_kwargs["device_scale_factor"] = scale
     if ignore_default_args:
         launch_kwargs["ignore_default_args"] = ignore_default_args
     if proxy:
@@ -552,7 +590,8 @@ async def launch_session(profile_dir: Path, headless: bool = False,
     sess = BrowserSession(pw=pw, context=context, page=page, mode="launch",
                           profile_dir=profile_dir, owns_pw=owns_pw,
                           headless=headless, timezone_id=timezone_id,
-                          gpu=bool(gpu and headless), gpu_node=effective_node)
+                          gpu=bool(gpu and headless), gpu_node=effective_node,
+                          device_scale_factor=scale)
     _wire_page_tracking(sess)
     return sess
 

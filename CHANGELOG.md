@@ -4,6 +4,59 @@ All notable changes to vibatchium are documented here. Versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Until 1.0,
 minor bumps may include breaking changes; we'll always call them out here.
 
+## [0.20.0] — 2026-09-02
+
+### feat(capture): `vb start --scale N` — real 2× screenshots, including of interactive states
+
+vibatchium had no way to change `window.devicePixelRatio`. Every capture came
+back at one image pixel per CSS pixel, so a crop meant for a retina asset landed
+at half the resolution it needed, and both workarounds are lossy:
+
+- A CSS `transform: scale(2)` on `<html>` does re-rasterize vector text crisply,
+  but media queries still resolve against the **real** viewport (a 2880px-wide
+  window laying out a 1440px-pinned element), `100vw` misbehaves, and it means
+  mutating a page you may not control.
+- `chrome --force-device-scale-factor=2 --screenshot` is faithful but can't
+  click, so it can never capture a modal, a hover, or a logged-in view.
+
+`--scale 2` closes exactly that gap: a genuine 2× capture of a page you drove
+there. It persists to the session's `display.json` like `--gpu`, so a self-heal
+relaunch carries the posture forward instead of silently halving every
+subsequent screenshot. `--scale 1` clears it. Range 1–4 (decode memory grows
+with scale², and the existing `max_screenshot_px` budget is already denominated
+in **device** pixels, so at 2× a tall page truncates at half the CSS height —
+which is the honest answer, not a regression).
+
+**The trade-off, stated plainly.** Chromium only accepts `deviceScaleFactor` as
+a browser-*context* option, and Playwright refuses it alongside `no_viewport`
+(`"deviceScaleFactor" option is not supported with null "viewport"`). So a
+scaled session swaps vibatchium's `no_viewport` default for a pinned viewport
+(1280×800; `vb viewport W H` resizes and the scale survives) and emulates device
+metrics — `screen == viewport`, the same residual `vb gpu` already reports. That
+makes it a **capture** posture, not a walled-browsing one: `start` returns
+`screen_coherent: false` and says so in `note`. Default sessions are byte-
+identical to before — no viewport pin, no emulation, nothing.
+
+**Why not a runtime toggle.** CDP
+`Emulation.setDeviceMetricsOverride{deviceScaleFactor: N}` does move
+`window.devicePixelRatio` (and takes width/height 0 for a scale-only override
+that would have preserved `no_viewport`), but Playwright's screenshot path sizes
+its output from its *own* cached context scale factor — `page.screenshot()` kept
+returning 1× bytes even with `scale="device"`, and `set_viewport_size()` silently
+clobbered the override back to 1. Only a raw `Page.captureScreenshot` sees it, so
+that route meant re-implementing the screenshot handler's `full_page` + clip +
+`max_screenshot_px` height-cap logic on `Page.getLayoutMetrics`. Context-level
+scale needs none of it: plain, `--full-page`, `--tiles`, `--annotate` and the
+vision verbs are all DPR-correct for free (`vision_click` already divides click
+coordinates by dpr).
+
+Also: `viewport` now reports `scale` + `device_width`/`device_height` on a scaled
+session, so a caller sizing a capture doesn't have to do the multiplication.
+Zero new verbs and zero new MCP tools — one option on `start`, one property on
+its schema. Patchright backend only (nodriver connects over CDP to a context it
+didn't create); `start` reports `scale_ignored` rather than dropping it silently,
+and `scale_pending` when asked to scale an already-running browser.
+
 ## [0.19.2] — 2026-08-26
 
 ### feat(skill): teach the agent the walled-page ladder and the optional lanes

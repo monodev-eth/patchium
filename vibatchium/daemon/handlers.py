@@ -579,6 +579,19 @@ def register_all(daemon) -> None:
             gpu_persisted = bool(args["gpu"])
             save_session_gpu(profile_dir, {"on": gpu_persisted})
 
+        # 0.20.0: `--scale N` persists to display.json for exactly the same reasons
+        # `--gpu` persists — the launch posture must survive a self-heal relaunch,
+        # and create()/relaunch() resolve it from disk, never from a transient param.
+        # A scale of 1 REMOVES the file (back to the no_viewport default), so
+        # `--scale 1` is a real opt-out and not a pinned-viewport 1x session.
+        # Validated here rather than at launch: a bad scale should fail the call
+        # loudly, not silently degrade a session three layers down.
+        scale_persisted = None
+        if "scale" in args:
+            from ..display import normalize_scale, save_session_display
+            scale_persisted = normalize_scale(args["scale"])
+            save_session_display(profile_dir, {"scale": scale_persisted})
+
         if d.registry.has(name):
             entry = d.registry.get(name)
             # Allow `start --ephemeral` to mark an already-running session for
@@ -598,11 +611,22 @@ def register_all(daemon) -> None:
             out = {"already_started": True, "mode": entry.session.mode,
                    "session": name, "profile": str(entry.profile_dir),
                    "ephemeral": entry.ephemeral,
-                   "gpu": bool(getattr(entry.session, "gpu", False))}
+                   "gpu": bool(getattr(entry.session, "gpu", False)),
+                   "scale": float(getattr(entry.session, "device_scale_factor", 1.0))}
             if gpu_persisted is not None:
                 out["gpu_pending"] = gpu_persisted
                 out["note"] = ("gpu persisted; already running — close + start to "
                                "apply (a live renderer swap needs a relaunch)")
+            # Same honesty as gpu_pending: deviceScaleFactor is a context-CREATION
+            # option, so it can't be applied to a live browser. Say so instead of
+            # letting `start --scale 2` on a running session read as success and
+            # hand back 1x screenshots.
+            if scale_persisted is not None and scale_persisted != out["scale"]:
+                out["scale_pending"] = scale_persisted
+                out.setdefault("note",
+                    f"scale {scale_persisted}x persisted; already running at "
+                    f"{out['scale']}x — deviceScaleFactor is a context-creation "
+                    f"option, so close + start to apply")
             # Honesty: `--headed` can't upgrade an ALREADY-RUNNING browser. Say so
             # (mirrors gpu_pending) instead of silently dropping it — the guard
             # below only fires on a COLD launch, so without this the most common
@@ -650,7 +674,8 @@ def register_all(daemon) -> None:
                "session": name, "profile": str(entry.profile_dir),
                "profile_name": entry.profile_dir.name,
                "backend": backend, "ephemeral": ephemeral,
-               "gpu": bool(getattr(entry.session, "gpu", False))}
+               "gpu": bool(getattr(entry.session, "gpu", False)),
+               "scale": float(getattr(entry.session, "device_scale_factor", 1.0))}
         # Honest residual (v1 is WebGL-only): a real renderer still reports
         # screen == viewport in headless — don't let `gpu:true` read as a fully-real
         # device. Mirrors gpu_info.
@@ -670,6 +695,38 @@ def register_all(daemon) -> None:
                           else "no accessible /dev/dri/renderD* on this host")
                 out["gpu_ignored"] = True
                 out["note"] = f"GPU WebGL configured but not applied: {reason}"
+
+        # 0.20.0: a scaled session traded the no_viewport default for a pinned
+        # viewport — that's the whole mechanism, and a posture change the caller has
+        # to know about. Reported on every scaled launch, whether the scale came
+        # from this call or from a previously persisted display.json. Runs AFTER the
+        # GPU block and APPENDS: both postures can be on at once, and a note that
+        # silently replaced the other one would be worse than no note.
+        def _note(msg):
+            out["note"] = f"{out['note']} · {msg}" if out.get("note") else msg
+
+        if out["scale"] > 1:
+            vp = getattr(entry.session.page, "viewport_size", None) or {}
+            out["screen_coherent"] = False
+            out["viewport"] = vp or None
+            _note(f"{out['scale']}x captures; viewport pinned to "
+                  f"{vp.get('width')}x{vp.get('height')} (resize with "
+                  f"`vb viewport W H` — the scale survives). This is a capture "
+                  f"posture: device metrics are emulated, so screen == viewport. "
+                  f"Use an unscaled session for walls.")
+        else:
+            # Configured-on but the effective launch is 1x — only the nodriver
+            # backend can do that (connect_over_cdp can't set a context-creation
+            # option). Surface it in the RESPONSE like gpu_ignored, never a silent
+            # drop. Read from disk, not from this call's args, so a session that
+            # persisted a scale earlier still reports the mismatch on a bare start.
+            from ..display import load_session_display
+            _want = (load_session_display(profile_dir) or {}).get("scale")
+            if _want:
+                out["scale_ignored"] = True
+                _note(f"scale {_want}x configured but not applied: {backend} "
+                      f"backend (deviceScaleFactor is a context-creation option; "
+                      f"patchright-only)")
         return out
 
     # ─── session management ────────────────────────────────────────────
@@ -2753,7 +2810,20 @@ def register_all(daemon) -> None:
                 {"width": int(args["width"]), "height": int(args["height"])}
             )
         size = s.page.viewport_size or {}
-        return {"width": size.get("width"), "height": size.get("height")}
+        out = {"width": size.get("width"), "height": size.get("height")}
+        # 0.20.0: on a scaled session the CSS viewport is no longer the size a
+        # screenshot comes back at — report the scale AND the device-pixel dims so a
+        # caller sizing a capture doesn't have to know the multiplication. Only when
+        # scaled, so an ordinary session's response is byte-identical to before.
+        # (A resize keeps the scale: Playwright re-applies its context
+        # deviceScaleFactor on set_viewport_size — verified.)
+        scale = float(getattr(s, "device_scale_factor", 1.0) or 1.0)
+        if scale > 1:
+            out["scale"] = scale
+            if size.get("width") and size.get("height"):
+                out["device_width"] = int(size["width"] * scale)
+                out["device_height"] = int(size["height"] * scale)
+        return out
 
     # ─── storage (cookies + localStorage + sessionStorage) ────────────────
 

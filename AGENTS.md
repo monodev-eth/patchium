@@ -383,6 +383,39 @@ pointer-event stream (`pointerrawupdate`, coalesced samples) is unreachable via
 synthetic CDP input by construction; only attach-mode against a real headful
 Chrome closes it.
 
+### Retina / 2× captures — `start --scale` (and what it costs)
+
+```bash
+$VB --session shots start --scale 2   # devicePixelRatio 2 (1–4, persisted; --scale 1 clears)
+$VB --session shots viewport 1440 900 # scale survives a resize
+$VB --session shots screenshot -o card.png   # → 2880×1800 PNG
+```
+
+Use it when a screenshot has to be a **usable asset**, not a look — an OG card, a
+crop for a deck, anything a designer will open. The default session captures one
+image pixel per CSS pixel, so a retina crop lands at half the resolution it needs.
+Its real edge over `chrome --force-device-scale-factor=2 --screenshot` is that it
+can still *click*: 2× shots of a modal, a hover state, or a logged-in view.
+
+**It is a capture posture, not a browsing one.** `deviceScaleFactor` is a
+context-creation option and Playwright refuses it with `no_viewport`, so a scaled
+session pins a viewport and emulates device metrics — `screen == viewport`, the
+same residual `gpu` reports. `start` returns `screen_coherent: false` for exactly
+this reason. **Don't point a scaled session at a Cloudflare/DataDome wall**; use a
+normal one and scale a separate session for the picture.
+
+Three things that will otherwise cost you an afternoon:
+
+- It applies on a **cold** start only. `start --scale 2` on a running session
+  persists the choice and returns `scale_pending` — close and start to apply.
+- `max_screenshot_px` is denominated in **device** pixels, so at 2× a tall page
+  truncates at half the CSS height it used to. That's arithmetic, not a bug.
+- Patchright only. The nodriver backend connects over CDP to a context it didn't
+  create; you get `scale_ignored: true` in the response.
+
+`viewport` reports `scale` + `device_width`/`device_height` on a scaled session —
+read it instead of multiplying by hand.
+
 ## Watch or hand off — liveview
 
 Stream a headless session's frames to any normal browser to watch an agent work,
@@ -403,7 +436,7 @@ not a native window.
 
 - `explore` → JSON to stdout `{url, title, text, screenshot_path?, screenshot_reason?, status, elapsed_ms, closed}`. **Text-first.** The MCP tool captures a screenshot *only* as a fallback when the page yields no usable text or is walled (`screenshot` = `auto`|`always`|`never`, `min_text_chars` tunes the auto threshold); when it does, the PNG comes back as a viewable image block, not base64. The CLI still screenshots by default, written to `~/.cache/vibatchium/explores/` (no base64 in stdout); `--auto-screenshot` makes the CLI text-first too, `-o <dir>` writes a chosen dir + markdown summary, `--inline-screenshot` returns base64 inline.
 - `research` → per-thread markdown + landing screenshots + `index.md` in `--output-dir`.
-- `screenshot` → PNG via `--path`. `text`/`html`/`content` → stdout. `--tiles` slices a full-page capture into fixed-height (`--tile-height`, default 1024px) PNG tiles written to disk (0600) — returns `{tiles:[paths], count}`, never base64 — for layout-heavy pages a vision-capable agent then reads tile-by-tile. The session's real viewport is used (no exotic fixed width — that's a fingerprint signal). Needs Pillow (the `[annotate]` extra).
+- `screenshot` → PNG via `--path`. `text`/`html`/`content` → stdout. `--tiles` slices a full-page capture into fixed-height (`--tile-height`, default 1024px) PNG tiles written to disk (0600) — returns `{tiles:[paths], count}`, never base64 — for layout-heavy pages a vision-capable agent then reads tile-by-tile. The session's real viewport is used (no exotic fixed width — that's a fingerprint signal). Needs Pillow (the `[annotate]` extra). Output is 1 image pixel per CSS pixel unless the session was started with `--scale N` (see *Retina / 2× captures*), which multiplies every capture path — plain, `--full-page`, `--tiles`, `--annotate` — by N.
 - `extract` → `{markdown, chars, url?, title?, truncated?, structure_loss?, structure_signals?, forms?, forms_hint?}`. Clean Markdown of the page (or a `target` subtree) with boilerplate stripped — the drop-in for "scrape this authenticated page to Markdown" that Crawl4AI/Firecrawl can't reach. Always text, never base64; `max_chars` (default 40000) caps it. Sets `structure_loss` when it had to flatten multi-column tables or drop `<svg>`/`<canvas>` charts — the cue to `screenshot --tiles` and read the tiles with your own vision. Reports `forms` (dropped from markdown) so you know to `map`/`extract_fields` them. `mode` (default `markdown`) also does `links` (deduped `{url,text}`, absolute post-hydration URLs), `assets` (`{url,type,rel?}`, `data:` dropped), and `main` (main-content only via a text-density scorer, whole-page fallback).
 - `extract_fields` → `{fields, matched, misses, errors}`. Declarative structured extract: a `{name: selector}` map → one JSON object of values in ONE call, against the real authenticated Chrome DOM. Grammar: `name[]`=array, `sel@attr`=attribute, `sel@html`=innerHTML, bare=text; optional `target` scopes selectors to a subtree. `misses` (matched nothing) + `errors` (bad selector → `null`) let you fix a selector without re-reading the page. Reads text/attr/innerHTML only — never input values (retry-safe). Selectors are parsed in Python and passed as a serialized arg, never interpolated into JS. In the lean `content` bucket.
 - `detect_forms` → `{forms, count}`. Structured map of every `<form>` (plus a `formless` group for SPAs) with per-field `{tag,type,name,id,label,required,disabled,locator,options,checked,filled}` and a per-form `submit`. Each field's `locator` (`#id` → `tag[name=…]` → `@label:`/`@placeholder:`/`@title:`) pipes straight into `fill`/`click`. A free-text field's typed value is withheld unless `values=true`, and even then it's redacted when a type/name/autocomplete heuristic flags the field sensitive (`sensitive:true`) — best-effort, so don't pass `values=true` on untrusted pages. Read-only, retry-safe; optional `target` scopes the walk. In the `element` bucket. (Output isn't injection-scanned, same as `extract_fields`.)
