@@ -57,6 +57,16 @@ its schema. Patchright backend only (nodriver connects over CDP to a context it
 didn't create); `start` reports `scale_ignored` rather than dropping it silently,
 and `scale_pending` when asked to scale an already-running browser.
 
+### docs: say what this is where people actually read it
+
+The MCP-registry one-liner had been `Patchright stealth + Vibium-style
+LLM-friendly CLI…` since 0.15.1 — a phrase that means nothing to anyone who
+hasn't read our commit history, on the single string the official registry and
+its downstreams display. It now reads *"Stealth browser automation for AI agents
+— real Chrome, N parallel persistent logged-in sessions."* README gains a
+`--scale` section (it existed only in `AGENTS.md` and this changelog) and its
+test count is re-counted from the suite rather than from memory.
+
 ## [0.19.2] — 2026-08-26
 
 ### feat(skill): teach the agent the walled-page ladder and the optional lanes

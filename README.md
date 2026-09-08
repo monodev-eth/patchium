@@ -45,7 +45,7 @@ vb research --target https://example.com \          # parallel fan-out, N intent
   --intent "pricing model" --intent "customers" --intent "tech stack"
 ```
 
-**Status:** active development, alpha. **1,195 tests** green in CI (Linux, Python 3.11–3.13). Apache-2.0 (AGPL only via the opt-in `nodriver` extra).
+**Status:** active development, alpha. **1,250 tests** green in CI (Linux, Python 3.11–3.13). Apache-2.0 (AGPL only via the opt-in `nodriver` extra).
 
 <sub>Detector scores quoted below (bot.sannysoft, CreepJS, Cloudflare cold-launch) are **manual observations, not CI-asserted** — no test in the suite gates on them, and they are only as current as the last hand-run. The generated block under [Measured scores](#measured-scores) is the one to trust; it is empty until someone runs it.</sub>
 
@@ -318,6 +318,31 @@ patches apply in *all* tiers, including attach (`connect_over_cdp`).
 > wall in the browser, `vb fetch` reuses that session's cookies+proxy to hit
 > JSON/API endpoints at TLS-fingerprint-correct speed — but it runs no JS, so it
 > can't *clear* a JS challenge itself.
+
+## Captures — 2× screenshots of states you had to click to reach
+
+```
+vb --session shots start --scale 2          # devicePixelRatio 2 (1–4, persisted; --scale 1 clears)
+vb --session shots go https://example.com
+vb --session shots click @e3                # open the modal…
+vb --session shots screenshot -o card.png   # …then capture it at 2560×1600
+                                            # (2× the 1280×800 pin; vb viewport W H to resize)
+```
+
+The default session captures one image pixel per CSS pixel, so a crop meant for a
+retina asset lands at half the resolution it needs. `chrome
+--force-device-scale-factor=2 --screenshot` is faithful but can't click, so it can
+never capture a modal, a hover, or a logged-in view. `--scale` does both.
+
+**It's a capture posture, not a browsing one.** Chromium only takes
+`deviceScaleFactor` at context creation and Playwright refuses it alongside
+`no_viewport`, so a scaled session pins a viewport and emulates device metrics —
+`screen == viewport`, and `start` says so with `screen_coherent: false`. Don't
+point a scaled session at a Cloudflare/DataDome wall; browse on a normal one and
+scale a separate session for the picture. Cold start only (`scale_pending` on a
+live session), Patchright only (`scale_ignored` on nodriver), and
+`max_screenshot_px` is denominated in *device* pixels — at 2× a tall page
+truncates at half the CSS height. Details in [`AGENTS.md`](AGENTS.md), under *Retina / 2× captures*.
 
 ## Search — find the URL, not just read it
 
