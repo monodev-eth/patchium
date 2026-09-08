@@ -67,6 +67,25 @@ its downstreams display. It now reads *"Stealth browser automation for AI agents
 `--scale` section (it existed only in `AGENTS.md` and this changelog) and its
 test count is re-counted from the suite rather than from memory.
 
+`Dockerfile.glama` is new: a minimal image that runs `vb mcp` on stdio, in
+contrast to `./Dockerfile`, whose CMD starts the REST shim. It installs no
+Chrome, because `initialize` and `tools/list` answer from static metadata —
+verified with `PLAYWRIGHT_BROWSERS_PATH` pointed at an empty dir and a
+throwaway `HOME`: 86 tools, 1,985-char instructions, no daemon, no browser.
+
+It also carries the answer to a month-old puzzle. Glama's listing had been
+reporting "No tools", "capabilities have not been inspected yet" and "publishes
+no instructions" since the day we were listed. Glama does not build our
+Dockerfile at all — it clones the repo and generates one from admin-panel
+fields, and that generated image runs `uv sync`, which installs into
+`/app/.venv` and adds nothing to `PATH`. Its `CMD ["mcp-proxy","--","vb","mcp"]`
+therefore could not resolve `vb`, and every build test failed. Pointing the CMD
+at `/app/.venv/bin/vb` turns the test green in ~14s and returns the full lean
+catalogue; the working panel values are recorded in `Dockerfile.glama`'s header.
+
+The PyPI summary in `pyproject.toml` carried the same `Vibium-style` phrasing as
+`server.json` and is fixed too.
+
 ## [0.19.2] — 2026-08-26
 
 ### feat(skill): teach the agent the walled-page ladder and the optional lanes
