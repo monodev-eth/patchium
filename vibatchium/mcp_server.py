@@ -55,6 +55,16 @@ def _bool(desc: str, default: bool = False) -> dict:
     return {"type": "boolean", "description": desc, "default": default}
 
 
+def _num(desc: str, *, minimum: float | None = None,
+         maximum: float | None = None) -> dict:
+    s = {"type": "number", "description": desc}
+    if minimum is not None:
+        s["minimum"] = minimum
+    if maximum is not None:
+        s["maximum"] = maximum
+    return s
+
+
 # Each entry: (name, description, json_schema for input, daemon_cmd, arg_mapper)
 # arg_mapper transforms the MCP tool args dict into the daemon RPC args dict.
 TOOLS: list[tuple[str, str, dict, str, Any]] = [
@@ -70,6 +80,15 @@ TOOLS: list[tuple[str, str, dict, str, Any]] = [
                             "one-shot work that shouldn't leave login state on "
                             "disk. Prevents profile bloat from per-run sessions.",
                             False),
+         "scale": _num("devicePixelRatio for this session (1-4, persisted). Set 2 "
+                       "when you need retina-resolution screenshots — including of "
+                       "interactive states (a modal, a hover, a logged-in view) "
+                       "that a headless one-shot capture can't reach. Trade-off: a "
+                       "scaled session pins a viewport and emulates device metrics "
+                       "(screen == viewport), so use an unscaled session for "
+                       "anti-bot walls. Takes effect on a COLD start — it can't be "
+                       "applied to an already-running browser. Patchright only.",
+                       minimum=1, maximum=4),
      }},
      "start", None),
     ("attach", "Attach to an existing Chrome via CDP (use after manual login on a Cloudflare-walled site).",

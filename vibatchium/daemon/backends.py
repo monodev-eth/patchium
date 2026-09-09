@@ -107,11 +107,15 @@ async def launch_patchright_session(
     timezone_id: str | None = None,
     gpu: bool = False,
     gpu_node: str | None = None,
+    device_scale_factor: float | None = None,
+    viewport: dict | None = None,
 ) -> BrowserSession:
     """Canonical Patchright launch (current default)."""
     return await launch_session(profile_dir, headless=headless, pw=pw,
                                 proxy=proxy, timezone_id=timezone_id, gpu=gpu,
-                                gpu_node=gpu_node)
+                                gpu_node=gpu_node,
+                                device_scale_factor=device_scale_factor,
+                                viewport=viewport)
 
 
 def _nodriver_cdp_url(browser, requested_port: int) -> str:
@@ -291,6 +295,8 @@ async def launch(
     timezone_id: str | None = None,
     gpu: bool = False,
     gpu_node: str | None = None,
+    device_scale_factor: float | None = None,
+    viewport: dict | None = None,
 ) -> BrowserSession:
     """Dispatch to the requested backend's launcher."""
     if backend not in VALID_BACKENDS:
@@ -301,10 +307,16 @@ async def launch(
         return await launch_patchright_session(profile_dir, headless=headless,
                                                 pw=pw, proxy=proxy,
                                                 timezone_id=timezone_id, gpu=gpu,
-                                                gpu_node=gpu_node)
+                                                gpu_node=gpu_node,
+                                                device_scale_factor=device_scale_factor,
+                                                viewport=viewport)
     if backend == "nodriver":
         # gpu IS honoured on this path now; only gpu_node (render-node pinning)
         # is not, because it needs an env var and nodriver spawns Chrome itself.
+        # device_scale_factor likewise cannot apply: nodriver spawns Chrome and we
+        # connect_over_cdp to a context we did not create, and deviceScaleFactor is
+        # a context-CREATION option. `start` reports scale_ignored so the drop is
+        # visible in the response, not just silent.
         return await launch_nodriver_session(profile_dir, headless=headless,
                                               pw=pw, proxy=proxy,
                                               timezone_id=timezone_id, gpu=gpu)

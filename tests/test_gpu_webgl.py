@@ -304,7 +304,9 @@ async def test_launch_for_relaunch_rereads_gpu_from_disk(monkeypatch, tmp_path):
     seen = []
 
     async def fake_launch(backend, pdir, *, headless, pw=None, proxy=None,
-                          timezone_id=None, gpu=False, gpu_node=None):
+                          timezone_id=None, gpu=False, gpu_node=None, **kw):
+        # **kw so this fake doesn't pin backends.launch's keyword list — it grew a
+        # device_scale_factor in 0.20.0 and will grow again.
         seen.append((gpu, gpu_node))
         return SimpleNamespace(mode="launch", headless=headless, gpu=bool(gpu),
                                gpu_node=gpu_node, flags={})

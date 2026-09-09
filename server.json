@@ -2,8 +2,8 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.trueoriginlabs/vibatchium",
   "title": "vibatchium",
-  "description": "Patchright stealth + Vibium-style LLM-friendly CLI for agentic browser automation.",
-  "version": "0.19.2",
+  "description": "Stealth browser automation for AI agents — real Chrome, N parallel persistent logged-in sessions.",
+  "version": "0.20.0",
   "repository": {
     "url": "https://github.com/trueoriginlabs/vibatchium",
     "source": "github",
@@ -22,7 +22,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "vibatchium",
-      "version": "0.19.2",
+      "version": "0.20.0",
       "runtimeHint": "uvx",
       "transport": { "type": "stdio" },
       "packageArguments": [

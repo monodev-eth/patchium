@@ -1,0 +1,45 @@
+# Standalone stdio-MCP image — and the record of how Glama's check actually works.
+#
+# The main ./Dockerfile is the runtime image: its CMD starts the REST shim
+# (`vb serve` on :8000), which is what an operator running the container wants.
+# This one runs `vb mcp` on stdio instead — the surface an MCP host speaks.
+#
+# GLAMA DOES NOT USE THIS FILE. Its listing check clones the repo and generates
+# its own Dockerfile from admin-panel fields. What was broken there: the
+# generated image runs `uv sync`, which installs into /app/.venv and adds
+# nothing to PATH, so its `CMD ["mcp-proxy","--","vb","mcp"]` could not resolve
+# `vb`. Every build test failed for a month and the listing showed no tools,
+# no capabilities and no instructions. The values that fixed it, recorded here
+# so they are not lost with the browser tab:
+#
+#   build steps    ["uv sync"]
+#   CMD arguments  ["mcp-proxy","--","/app/.venv/bin/vb","mcp"]
+#   pinned commit  (empty — follow master)
+#
+# With those the build test goes green in ~14s and introspection returns the
+# lean 86-tool catalogue plus the instructions block.
+#
+# This image installs no Chrome: `initialize` and `tools/list` answer from
+# static metadata — verified with PLAYWRIGHT_BROWSERS_PATH pointed at an empty
+# dir and a throwaway HOME (vibatchium 0.20.0, protocol 2025-06-18, 1,985-char
+# instructions, 86 tools). Verbs that drive a browser need the full image; an
+# introspection pass calls none of them.
+
+FROM python:3.13-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+# hatchling reads the version from vibatchium/__init__.py, so the build needs no
+# git metadata in the context — just the package and the files pyproject names.
+COPY pyproject.toml README.md LICENSE ./
+COPY vibatchium/ ./vibatchium/
+
+RUN pip install .
+
+# stdio JSON-RPC. The lean profile is what a default `vb setup` registers, so it
+# is what the listing should reflect.
+CMD ["vb", "mcp"]
